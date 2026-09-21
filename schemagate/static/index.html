@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>兼容性闸门 · SchemaGate</title>
+<style>
+  :root { --bg:#0f1420; --panel:#171e2e; --line:#2a3550; --fg:#dbe4f5; --dim:#8b98b8;
+          --err:#ff6b6b; --warn:#ffc857; --ok:#51cf8a; --accent:#5aa9ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:"SF Mono",Menlo,Consolas,"PingFang SC",monospace;
+         background:var(--bg); color:var(--fg); font-size:13px; }
+  header { padding:12px 20px; border-bottom:1px solid var(--line); display:flex;
+           align-items:baseline; gap:14px; }
+  header h1 { margin:0; font-size:20px; color:var(--accent); }
+  header span { color:var(--dim); }
+  main { display:grid; grid-template-columns:1.1fr 0.9fr 1.2fr; gap:12px; padding:12px 20px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+            padding:14px; min-height:70vh; }
+  h2 { font-size:14px; margin:0 0 10px; color:var(--accent); }
+  h3 { font-size:12px; margin:16px 0 6px; color:var(--dim); text-transform:uppercase; }
+  label { display:block; margin:8px 0 4px; color:var(--dim); }
+  input, select, textarea { width:100%; background:#0d1220; color:var(--fg);
+    border:1px solid var(--line); border-radius:5px; padding:6px 8px; font:inherit; }
+  textarea { height:180px; resize:vertical; white-space:pre; }
+  button { background:var(--accent); color:#06101f; border:0; border-radius:5px;
+           padding:7px 14px; font:inherit; font-weight:600; cursor:pointer; margin-top:8px; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--fg); }
+  .row { display:flex; gap:8px; align-items:end; }
+  .row > * { flex:1; }
+  .radio label, .consumer label { display:flex; gap:6px; align-items:center;
+    color:var(--fg); margin:4px 0; }
+  .radio input, .consumer input { width:auto; }
+  #verdict { padding:10px 14px; border-radius:6px; font-weight:700; margin-bottom:10px; }
+  #verdict.ok { background:rgba(81,207,138,.15); color:var(--ok); border:1px solid var(--ok); }
+  #verdict.bad { background:rgba(255,107,107,.12); color:var(--err); border:1px solid var(--err); }
+  .issue { border:1px solid var(--line); border-left:4px solid var(--err);
+           border-radius:6px; padding:8px 10px; margin:8px 0; }
+  .issue.warning { border-left-color:var(--warn); }
+  .issue .meta { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .badge { font-size:11px; padding:1px 7px; border-radius:10px; background:#0d1220;
+           border:1px solid var(--line); color:var(--dim); }
+  .badge.error { color:var(--err); border-color:var(--err); }
+  .badge.warning { color:var(--warn); border-color:var(--warn); }
+  .path { color:var(--accent); }
+  pre { background:#0d1220; border:1px solid var(--line); border-radius:5px;
+        padding:6px 8px; overflow:auto; margin:6px 0 0; }
+  .consumers-chip { color:var(--warn); }
+  .decision { border-bottom:1px solid var(--line); padding:6px 0; }
+  .msg { margin-top:8px; min-height:18px; }
+  .msg.err { color:var(--err); } .msg.ok { color:var(--ok); }
+  .chain { color:var(--fg); }
+</style>
+</head>
+<body>
+<header>
+  <h1>兼容性闸门</h1>
+  <span>Schema 演进检查 · backward / forward / full · 反例与迁移链</span>
+</header>
+<main>
+  <section>
+    <h2>① Schema 编辑</h2>
+    <div class="row">
+      <div><label>Schema 名</label><input id="schemaName" value="order"></div>
+      <div><label>候选版本号</label><input id="schemaVersion" value="v2"></div>
+    </div>
+    <label>旧版 schema（当前 head）</label>
+    <textarea id="oldSchema">{
+  "type": "object",
+  "required": ["id", "total"],
+  "additionalProperties": false,
+  "properties": {
+    "id":    { "type": "string" },
+    "total": { "type": "integer", "minimum": 0, "maximum": 10000 },
+    "note":  { "type": ["string", "null"], "default": null },
+    "tags":  { "type": "array", "items": { "type": "string" } }
+  }
+}</textarea>
+    <label>候选 schema（计划发布）</label>
+    <textarea id="newSchema">{
+  "type": "object",
+  "required": ["id", "total"],
+  "additionalProperties": false,
+  "properties": {
+    "id":    { "type": "string" },
+    "total": { "type": "integer", "minimum": 0, "maximum": 5000 },
+    "tags":  { "type": "array", "items": { "type": "string" } },
+    "level": { "type": "string", "enum": ["low", "mid"], "default": "low" }
+  }
+}</textarea>
+    <div class="row">
+      <button id="registerBtn" class="ghost">登记候选版本</button>
+    </div>
+    <div id="registerMsg" class="msg"></div>
+    <h3>迁移映射（字段重命名）</h3>
+    <div class="row">
+      <div><label>路径（根为 /）</label><input id="migPath" value="/"></div>
+      <div><label>旧字段</label><input id="migFrom" placeholder="name"></div>
+      <div><label>新字段</label><input id="migTo" placeholder="full_name"></div>
+    </div>
+    <button id="migAdd" class="ghost">添加映射</button>
+    <div id="migMsg" class="msg"></div>
+  </section>
+
+  <section>
+    <h2>② 方向与消费者</h2>
+    <div class="radio">
+      <label><input type="radio" name="direction" value="backward"> backward（新读旧数据）</label>
+      <label><input type="radio" name="direction" value="forward"> forward（旧读新数据）</label>
+      <label><input type="radio" name="direction" value="full" checked> full（双向）</label>
+    </div>
+    <h3>消费者集合（不选则按 schema 级严格判定）</h3>
+    <div id="consumerList" class="consumer">加载中…</div>
+    <div class="row">
+      <div><label>消费者名</label><input id="consName" value="billing"></div>
+      <div><label>声明版本</label><input id="consVersion" value="c1"></div>
+    </div>
+    <label>读取字段（JSON，如 [{"path":"/total"},{"path":"/note","default":null}]）</label>
+    <input id="consFields" value='[{"path":"/total"},{"path":"/note","default":null}]'>
+    <button id="consAdd" class="ghost">登记消费者声明</button>
+    <div id="consMsg" class="msg"></div>
+    <h3>检查</h3>
+    <button id="checkBtn">检查兼容性</button>
+    <h3>计划发布（幂等 + head 乐观锁）</h3>
+    <div class="row">
+      <div><label>基于版本（base）</label><input id="baseVersion" value="v1"></div>
+      <div><label>幂等键</label><input id="idemKey" value="release-0001"></div>
+    </div>
+    <button id="publishBtn">发布候选版本</button>
+    <div id="publishMsg" class="msg"></div>
+    <h3>导入 / 导出</h3>
+    <div class="row">
+      <button id="exportBtn" class="ghost">导出 JSON</button>
+      <input type="file" id="importFile" accept=".json">
+    </div>
+    <div id="importMsg" class="msg"></div>
+  </section>
+
+  <section>
+    <h2>③ 差异 · 反例 · 迁移链</h2>
+    <div id="verdict" class="ok">尚未检查</div>
+    <div id="issues"></div>
+    <h3>迁移链</h3>
+    <div id="chains">（无）</div>
+    <h3>历史决策</h3>
+    <div id="decisions">（无）</div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const api = async (path, opts) => {
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), {data, status: res.status});
+  return data;
+};
+const post = (path, body) => api(path, {method: "POST",
+  headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+const jparse = (id) => JSON.parse($(id).value);
+const msg = (id, text, ok) => { const el = $(id); el.textContent = text;
+  el.className = "msg " + (ok ? "ok" : "err"); };
+
+function selectedConsumers() {
+  return [...document.querySelectorAll("#consumerList input:checked")]
+    .map(cb => ({name: cb.dataset.name, version: cb.dataset.version}));
+}
+function direction() { return document.querySelector("input[name=direction]:checked").value; }
+
+async function refresh() {
+  const s = await api("/api/state");
+  const cl = $("consumerList");
+  cl.innerHTML = s.consumers.length ? "" : "（尚未登记消费者）";
+  for (const c of s.consumers) {
+    const l = document.createElement("label");
+    l.innerHTML = `<input type="checkbox" data-name="${c.name}" data-version="${c.version}">
+      ${c.name}@${c.version}（${c.fields.map(f => f.path).join(", ") || "∅"}）`;
+    cl.appendChild(l);
+  }
+  const ch = $("chains");
+  if (s.migrations.length) {
+    const byPath = {};
+    for (const m of s.migrations) (byPath[m.name + " " + m.path] ||= []).push(m);
+    ch.innerHTML = Object.entries(byPath).map(([k, ms]) =>
+      `<div class="chain">${k}: ${ms.map(m => m.from + " → " + m.to).join(" → ")}</div>`).join("");
+  } else ch.textContent = "（无）";
+  const ds = $("decisions");
+  ds.innerHTML = s.decisions.length ? "" : "（无）";
+  for (const d of s.decisions.slice().reverse()) {
+    const div = document.createElement("div");
+    div.className = "decision";
+    div.innerHTML = `#${d.id} ${d.name} ${d.base_version ?? "∅"} → ${d.candidate_version}
+      [${d.direction}] <b>${d.verdict}</b> <button class="ghost" data-id="${d.id}">重放</button>`;
+    div.querySelector("button").onclick = async (e) => {
+      const r = await api("/api/decisions/" + e.target.dataset.id + "/replay");
+      alert("决策 #" + r.decision_id + " 重放结果: " + r.replay + " (verdict=" + r.verdict + ")");
+    };
+    ds.appendChild(div);
+  }
+  const head = s.heads.find(h => h.name === $("schemaName").value);
+  if (head) $("baseVersion").value = head.version;
+}
+
+function render(result) {
+  const v = $("verdict");
+  v.textContent = result.verdict === "compatible" ? "✔ 兼容（" + result.direction + "）"
+                                                  : "✘ 不兼容（" + result.direction + "）";
+  v.className = result.verdict === "compatible" ? "ok" : "bad";
+  const box = $("issues");
+  box.innerHTML = result.issues.length ? "" : "<p>无差异。</p>";
+  for (const i of result.issues) {
+    const div = document.createElement("div");
+    div.className = "issue " + i.severity;
+    div.innerHTML = `<div class="meta">
+        <span class="badge ${i.severity}">${i.severity}</span>
+        <span class="badge">${i.direction}</span>
+        <span class="badge">${i.rule}</span>
+        <span class="path">${i.path}</span></div>
+      <div>${i.message}</div>
+      ${i.consumers.length ? `<div>受影响消费者: <span class="consumers-chip">${i.consumers.join(", ")}</span></div>` : ""}
+      <pre>反例: ${JSON.stringify(i.counterexample)}</pre>`;
+    box.appendChild(div);
+  }
+}
+
+$("checkBtn").onclick = async () => {
+  try {
+    render(await post("/api/check", {
+      name: $("schemaName").value,
+      old: jparse("oldSchema"), new: jparse("newSchema"),
+      direction: direction(), consumers: selectedConsumers(),
+    }));
+  } catch (e) { msg("publishMsg", "检查失败: " + e.message, false); }
+};
+$("registerBtn").onclick = async () => {
+  try {
+    const r = await post("/api/schemas", {name: $("schemaName").value,
+      version: $("schemaVersion").value, content: jparse("newSchema")});
+    msg("registerMsg", "已登记 " + r.name + "@" + r.version + " 指纹 " + r.fingerprint.slice(0, 12) + "…", true);
+    refresh();
+  } catch (e) { msg("registerMsg", e.message, false); }
+};
+$("consAdd").onclick = async () => {
+  try {
+    await post("/api/consumers", {name: $("consName").value,
+      version: $("consVersion").value, fields: JSON.parse($("consFields").value)});
+    msg("consMsg", "消费者声明已登记", true); refresh();
+  } catch (e) { msg("consMsg", e.message, false); }
+};
+$("migAdd").onclick = async () => {
+  try {
+    await post("/api/migrations", {name: $("schemaName").value, path: $("migPath").value,
+      from: $("migFrom").value, to: $("migTo").value});
+    msg("migMsg", "映射已添加", true); refresh();
+  } catch (e) { msg("migMsg", e.message, false); }
+};
+$("publishBtn").onclick = async () => {
+  try {
+    const d = await post("/api/publish", {
+      name: $("schemaName").value, base_version: $("baseVersion").value || null,
+      version: $("schemaVersion").value, content: jparse("newSchema"),
+      direction: direction(), consumers: selectedConsumers(),
+      idempotency_key: $("idemKey").value,
+    });
+    msg("publishMsg", "决策 #" + d.id + " " + d.verdict +
+      (d.idempotent_replay ? "（幂等重放，返回原决策）" : ""), d.verdict === "compatible");
+    render(d);
+  } catch (e) {
+    msg("publishMsg", e.status === 409 ? "head 冲突: " + e.message : "发布失败: " + e.message, false);
+  }
+};
+$("exportBtn").onclick = async () => {
+  const data = await api("/api/export");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], {type: "application/json"}));
+  a.download = "schemagate-export.json"; a.click();
+};
+$("importFile").onchange = async (e) => {
+  try {
+    const data = JSON.parse(await e.target.files[0].text());
+    const r = await post("/api/import", data);
+    msg("importMsg", "导入完成: " + JSON.stringify(r.imported), true); refresh();
+  } catch (err) { msg("importMsg", "导入失败: " + err.message, false); }
+};
+refresh();
+</script>
+</body>
+</html>

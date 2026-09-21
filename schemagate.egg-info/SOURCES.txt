@@ -1,0 +1,17 @@
+setup.cfg
+setup.py
+schemagate/__init__.py
+schemagate/__main__.py
+schemagate/compat.py
+schemagate/schema_model.py
+schemagate/server.py
+schemagate/store.py
+schemagate.egg-info/PKG-INFO
+schemagate.egg-info/SOURCES.txt
+schemagate.egg-info/dependency_links.txt
+schemagate.egg-info/requires.txt
+schemagate.egg-info/top_level.txt
+schemagate/static/index.html
+tests/test_compat.py
+tests/test_server.py
+tests/test_store.py
